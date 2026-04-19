@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 from services.images_google import search_first_image
+from services.images_google import GoogleImageSearchError
 
 # -------------------------------
 # Load images.json once (fast)
@@ -96,16 +97,16 @@ def _key_candidates(brand: str, model: str) -> Iterable[str]:
 # Optional Google fallback
 # -------------------------------
 
-def _google_first_image(query: str) -> Optional[str]:
-    """
-    Try to use a google image helper if present; otherwise return None.
-    This keeps the module safe even if Google integration isn’t installed.
-    """
+def _google_first_image(query: str, logger_override=None) -> Optional[str]:
+    active_logger = logger_override
     try:
-        return search_first_image(query)  # expected to return a URL string or None
-    except Exception:
+        return search_first_image(query)
+    except GoogleImageSearchError as exc:
+        active_logger.warning("[images] Google fallback failed for query=%r error=%s", query, exc)
         return None
-
+    except Exception:
+        active_logger.exception("[images] Unexpected Google fallback failure for query=%r", query)
+        return None
 
 # -------------------------------
 # Public resolver
@@ -138,3 +139,6 @@ def resolve_image_url(
     if logger:
         logger.info(f"[images] FALLBACK via Google: '{q}' (no local match)")
     return _google_first_image(q)
+
+
+

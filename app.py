@@ -38,13 +38,7 @@ def _clean_profile(data: dict) -> dict:
 def _run_recommend(profile: dict,
                    pin_ids: list[str] | None = None,
                    external_items: list[dict] | None = None):
-    """
-    Final ordering:
-      1) pinned catalog ids (if provided)
-      2) external (non-catalog) items (normalized)
-      3) rule-based picks
-    Then cap to k (1..6).
-    """
+    
     # Always sanitize profile so rules get numeric types
     profile = _clean_profile(profile)
 

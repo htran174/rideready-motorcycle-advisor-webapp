@@ -13,6 +13,7 @@
   };
   let history = readJSON('rr.history') || [];
   let hasRunOnce = history.length > 0;
+  let recommendedHistory = readJSON('rr.recommended_history') || [];
 
   // Curated ids for initial style-first bias (safe if ids missing)
   const STYLE_COMMON = {
@@ -72,6 +73,44 @@
       visibleList.appendChild(sk);
     }
   }
+
+  function bikeKey(brand, model) {
+  return `${String(brand || '').trim().toLowerCase()}|${String(model || '').trim().toLowerCase()}`;
+}
+
+function historyEntryFromItem(item) {
+  if (!item) return null;
+
+  const brand = item.brand || item.manufacturer || '';
+  const model = item.model || item.name || '';
+
+  if (!brand && !model) return null;
+
+  return { brand, model };
+}
+
+function mergeRecommendedHistory(oldHistory, items) {
+  const merged = [];
+  const seen = new Set();
+
+  for (const entry of oldHistory || []) {
+    const key = bikeKey(entry.brand, entry.model);
+    if (!entry || key === '|' || seen.has(key)) continue;
+    seen.add(key);
+    merged.push({ brand: entry.brand || '', model: entry.model || '' });
+  }
+
+  for (const item of items || []) {
+    const entry = historyEntryFromItem(item);
+    if (!entry) continue;
+    const key = bikeKey(entry.brand, entry.model);
+    if (key === '|' || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(entry);
+  }
+
+  return merged;
+}
 
   function perfLine(item) {
   const top = (item.max_speed_mph != null) ? item.max_speed_mph
@@ -372,7 +411,11 @@ chatForm && chatForm.addEventListener('submit', async (e) => {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, profile })
+      body: JSON.stringify({
+        message: text,
+        profile,
+        recommended_history: recommendedHistory
+      })
     });
 
     if (!res.ok) {
@@ -382,6 +425,11 @@ chatForm && chatForm.addEventListener('submit', async (e) => {
     }
 
     const plan = await res.json();
+    recommendedHistory = Array.isArray(plan.recommended_history)
+      ? plan.recommended_history
+      : recommendedHistory;
+
+    writeJSON('rr.recommended_history', recommendedHistory);
 
     // optional bot text
     if (plan.message) addBubble(plan.message, 'bot');
@@ -460,6 +508,8 @@ chatForm && chatForm.addEventListener('submit', async (e) => {
       let itemsFromRun = [];
       try {
         itemsFromRun = await runAndSave(); // updates cards/timeline/status
+        recommendedHistory = mergeRecommendedHistory(recommendedHistory, itemsFromRun);
+        writeJSON('rr.recommended_history', recommendedHistory);
       } catch (err) {
         console.error('[RR] runAndSave failed', err);
         setOpStatus('Failed to refresh recommendations.', 'error');
@@ -535,7 +585,11 @@ chatForm && chatForm.addEventListener('submit', async (e) => {
   btnReRun && btnReRun.addEventListener('click', async () => { await runAndSave(); });
   btnClearHistory && btnClearHistory.addEventListener('click', () => {
     history = [];
+    recommendedHistory = [];
+
     writeJSON('rr.history', history);
+    writeJSON('rr.recommended_history', recommendedHistory);
+
     renderVisibleFromHistory();
     renderTimeline();
     updateMeta();

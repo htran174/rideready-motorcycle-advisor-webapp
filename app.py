@@ -19,6 +19,72 @@ limiter = Limiter(get_remote_address, app=app, default_limits=["200/day"])
 
 # -------------------- helpers --------------------
 
+def _history_entry_from_item(item: dict) -> dict | None:
+    if not isinstance(item, dict):
+        return None
+
+    brand = item.get("brand") or item.get("manufacturer")
+    model = item.get("model") or item.get("name")
+
+    if not brand and not model:
+        return None
+
+    return {
+        "brand": brand,
+        "model": model,
+    }
+
+def _merge_history(old_history: list[dict] | None, items: list[dict] | None) -> list[dict]:
+    merged = []
+    seen = set()
+
+    for entry in old_history or []:
+        if not isinstance(entry, dict):
+            continue
+        key = _bike_identity(entry.get("brand"), entry.get("model"))
+        if key == ("", "") or key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "brand": entry.get("brand"),
+            "model": entry.get("model"),
+        })
+
+    for item in items or []:
+        entry = _history_entry_from_item(item)
+        if not entry:
+            continue
+        key = _bike_identity(entry.get("brand"), entry.get("model"))
+        if key == ("", "") or key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+
+    return merged
+
+def _bike_identity(brand: str | None, model: str | None) -> tuple[str, str]:
+    return (
+        (brand or "").strip().lower(),
+        (model or "").strip().lower(),
+    )
+
+def _history_set(recommended_history: list[dict] | None) -> set[tuple[str, str]]:
+    out = set()
+    for item in recommended_history or []:
+        if not isinstance(item, dict):
+            continue
+        brand = item.get("brand") or item.get("manufacturer")
+        model = item.get("model") or item.get("name")
+        key = _bike_identity(brand, model)
+        if key != ("", ""):
+            out.add(key)
+    return out
+
+def _item_identity(item: dict) -> tuple[str, str]:
+    brand = item.get("brand") or item.get("manufacturer")
+    model = item.get("model") or item.get("name")
+    return _bike_identity(brand, model)
+
 def local_image_url(local_image: str | None) -> str:
     if not local_image:
         return url_for("static", filename="stock_images/motorcycle_ride.jpg")
@@ -35,28 +101,28 @@ def _clean_profile(data: dict) -> dict:
         "k": max(1, min(6, _to_int(data.get("k"), 2))),
     }
 
-def _run_recommend(profile: dict,
-                   pin_ids: list[str] | None = None,
-                   external_items: list[dict] | None = None):
-    
-    # Always sanitize profile so rules get numeric types
-    profile = _clean_profile(profile)
+def _run_recommend(
+        profile: dict,
+        pin_ids: list[str] | None = None,
+        external_items: list[dict] | None = None,
+        recommended_history: list[dict] | None = None,):
 
-    # 1) Load catalog
+    profile = _clean_profile(profile)
+    history_seen = _history_set(recommended_history)
+
+    #Load catalog
     bikes = load_bikes()
-    # Some helpers might return (items, meta) — take the first item if so
     if isinstance(bikes, tuple):
         bikes = bikes[0]
     # Keep only dict bikes
     bikes = [b for b in (bikes or []) if isinstance(b, dict)]
 
-    # 2) Apply filters
+
     filtered = apply_filters(bikes, profile)
     if isinstance(filtered, tuple):
         filtered = filtered[0]
     filtered = [b for b in (filtered or []) if isinstance(b, dict)]
 
-    # 3) Rule picks (supports either: list OR (list, reasons))
     picked = []
     try:
         pr = pick_reasons(filtered, profile)
@@ -65,12 +131,9 @@ def _run_recommend(profile: dict,
         else:
             picked = pr
     except Exception as e:
-        # paster first passed
         picked = filtered
 
     picked = [b for b in (picked or []) if isinstance(b, dict)]
-
-    # Index catalog by id for fast pin lookups
     by_id = {b.get("id"): b for b in bikes if isinstance(b, dict) and b.get("id")}
 
     # Utility to dedupe by (id) or (mfr,name)
@@ -85,9 +148,17 @@ def _run_recommend(profile: dict,
         return ("mk", (it.get("manufacturer", "").lower(), it.get("name", "").lower()))
 
     def _add(it):
+        if not isinstance(it, dict):
+            return
+
+        identity = _item_identity(it)
+        if identity != ("", "") and identity in history_seen:
+            return
+
         k = _key(it)
         if not k or k in seen:
             return
+
         seen.add(k)
         out.append(it)
 
@@ -199,7 +270,11 @@ def api_recommend():
     profile = _clean_profile(data)                     # <-- sanitize
     pin_ids = data.get("pin_ids") or []
     external_items = data.get("external_items") or []
-    items = _run_recommend(profile, pin_ids=pin_ids, external_items=external_items)
+    items = _run_recommend(
+        profile,
+        pin_ids=pin_ids,
+        external_items=external_items,
+    )
     return jsonify({"items": items})
 
 @app.route("/api/images", methods=["POST"])
@@ -224,11 +299,17 @@ def api_chat():
     can render inline “card bubbles,” while the Recs tab stays in sync.
     """
     data = request.get_json(silent=True) or {}
+    
     msg = data.get("message", "") or ""
     profile = data.get("profile") or {}
+    recommended_history = data.get("recommended_history") or []
 
-    # Plan with OpenAI (now includes external_items + logs)
-    plan = make_plan(msg, profile, logger=app.logger)
+    plan = make_plan(
+        msg,
+        profile,
+        recommended_history=recommended_history,
+        logger=app.logger,
+    )
 
     pin_ids = []
     external_items = plan.get("external_items") or []
@@ -239,16 +320,22 @@ def api_chat():
         elif act.get("type") == "RECOMMEND":
             pin_ids.extend(act.get("pin_ids") or [])
 
-    # One recommend run that honors any temp overrides
-    items = _run_recommend(profile, pin_ids=pin_ids, external_items=external_items)
+    items = _run_recommend(
+        profile,
+        pin_ids=pin_ids,
+        external_items=external_items,
+        recommended_history=recommended_history,
+    )
 
-    # Harmonize shape for the frontend
+    updated_history = _merge_history(recommended_history, items)
+
     return jsonify({
         "topic": plan.get("topic", "motorcycle_recommendation"),
         "message": plan.get("message", ""),
         "actions": plan.get("actions", []),
-        "items": items,              # inline list for chat card bubbles
-        "profile": profile,          # updated snapshot
+        "items": items,
+        "profile": profile,
+        "recommended_history": updated_history,
     })
 
 @app.route("/healthz")

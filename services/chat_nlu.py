@@ -41,10 +41,16 @@ def _to_float(v):
 # Public API
 # ------------------------------------------------------------
 
-def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name: str = "gpt-4o-mini") -> dict:
+def make_plan(
+    user_msg: str,
+    profile: dict,
+    recommended_history: list[dict] | None = None,
+    logger=None,
+    client=None,
+    model_name: str = "gpt-4o-mini",
+) -> dict:
     """
     Produce a strict JSON plan with exactly TWO RECOMMEND actions when recommending bikes.
-    Also returns `external_items` (max 2) normalized for the recommender.
     Incorporates user profile context (height, budget, bike_types) when provided.
     """
 
@@ -53,34 +59,45 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
         "You always consider the user's provided profile data if available: height (cm), budget (USD), and preferred bike types.\n"
         "If height is provided, avoid recommending bikes too tall for shorter riders (<170 cm).\n"
         "If budget is provided, recommend bikes within or near that range (do not exceed it by much).\n"
-        "If bike types are provided, prioritize those categories first. Unless user ask for a different categorie.\n"
-        "If a field is blank or missing, simply ignore it (do not make assumptions).\n"
-        "User will be no experience or little experience, if User is no experience do not recommend bike bigger than midsize bike (i.e at most would be a cbr500)\n"
-        "If User has little experience you can recommend bikes around 500cc range or more when user request to see bigger bikes you can show them bikes under 1000cc, but no supper bikes i.e no 1000cc bike or stronger.\n\n"
+        "If bike types are provided, prioritize those categories first, unless the user asks for a different category.\n"
+        "If a field is blank or missing, ignore it.\n"
+        "User will be no experience or little experience. If user has no experience, do not recommend bigger than midsize bikes.\n"
+        "If user has little experience and asks for bigger bikes, you may show bikes under 1000cc, but no superbikes.\n\n"
+
+        "IMPORTANT: You will also receive a list of motorcycles that were already recommended earlier in this chat.\n"
+        "Treat this list as prior chat history.\n"
+        "Do NOT recommend the same motorcycle again if it already appears in the prior recommended list.\n"
+        "A motorcycle counts as the same if the brand and model match, even if wording is slightly different.\n"
+        "If possible, choose different motorcycles that still fit the user's request.\n\n"
+
         "You must respond ONLY with a strict JSON object having keys: topic, message, actions.\n"
         "When recommending, always include exactly TWO RECOMMEND actions with fields:\n"
-        "The message should always be general and not specfic about any bike leave the specfic for the description.\n"
         "{"
         "\"type\":\"RECOMMEND\","
-        "\"brand\":\"... i.e honda ...\","
-        "\"model\":\"... i.e cbr300r ...\","
+        "\"brand\":\"Honda\","
+        "\"model\":\"CBR500R\","
         "\"category\":\"sportbike\","
-        "\"max_speed_mph\":<int>,"
-        "\"zero_to_sixty_s\":<float>,"
-        "\"official_url\":\"...\","
-        "\"image_query\":\"<brand and model>\","
-        "\"description\":\"<short one-sentence summary of why it fits the user profile>\""
+        "\"max_speed_mph\":112,"
+        "\"zero_to_sixty_s\":4.7,"
+        "\"official_url\":\"https://...\","
+        "\"image_query\":\"Honda CBR500R\","
+        "\"description\":\"A short one-sentence explanation of why it fits.\""
         "}\n"
-        "Use numbers (not strings) for speeds/acceleration. Keep your message concise and informative.\n"
-        "If user messesge is not in scope of motorcyle please kindly return a message that tell them that their out of scope and only ask about motorcyle.\n"
-        "Unless user ask otherwise try to recommend common models that most US buyer can buy 2nd hand.\n"
+        "Use numbers (not strings) for speeds/acceleration.\n"
+        "The message should stay general and should not contain detailed per-bike explanations.\n"
+        "If the user message is outside motorcycle scope, kindly say you only help with motorcycles.\n"
+        "Unless user asks otherwise, prefer common models that are realistic for US buyers to find used.\n"
     )
+
+    recommended_history = recommended_history or []
 
     user = {
         "role": "user",
         "content": (
             f"User message: {user_msg}\n\n"
-            f"User profile (may be partially empty): {json.dumps(profile, ensure_ascii=False, indent=2)}"
+            f"User profile (may be partially empty): {json.dumps(profile, ensure_ascii=False, indent=2)}\n\n"
+            f"Previously recommended motorcycles (avoid repeating these): "
+            f"{json.dumps(recommended_history, ensure_ascii=False, indent=2)}"
         ),
     }
 
@@ -142,7 +159,7 @@ def make_plan(user_msg: str, profile: dict, logger=None, client=None, model_name
     if len(recs) >= 2:
         recs = recs[:2]
     elif len(recs) == 1:
-        recs = [recs[0], dict(recs[0])]  # duplicate single rec
+        recs = recs[:1]
     else:
         recs = []  # allow empty (chat will still respond textually)
 

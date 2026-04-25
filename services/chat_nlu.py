@@ -63,6 +63,12 @@ def make_plan(
         "If a field is blank or missing, ignore it.\n"
         "User will be no experience or little experience. If user has no experience, do not recommend bigger than midsize bikes.\n"
         "If user has little experience and asks for bigger bikes, you may show bikes under 1000cc, but no superbikes.\n\n"
+        "If the user message is outside motorcycle scope:\n"
+        "- Do NOT recommend any motorcycles.\n"
+        "- Do NOT include RECOMMEND actions.\n"
+        "- Respond with a general message that you only help with motorcycle-related questions.\n\n"
+
+
 
         "IMPORTANT: You will also receive a list of motorcycles that were already recommended earlier in this chat.\n"
         "Treat this list as prior chat history.\n"
@@ -71,7 +77,8 @@ def make_plan(
         "If possible, choose different motorcycles that still fit the user's request.\n\n"
 
         "You must respond ONLY with a strict JSON object having keys: topic, message, actions.\n"
-        "When recommending, always include exactly TWO RECOMMEND actions with fields:\n"
+        "When the user is asking for motorcycle recommendations:\n"
+        "- Include exactly TWO RECOMMEND actions.\n"
         "{"
         "\"type\":\"RECOMMEND\","
         "\"brand\":\"Honda\","
@@ -85,7 +92,6 @@ def make_plan(
         "}\n"
         "Use numbers (not strings) for speeds/acceleration.\n"
         "The message should stay general and should not contain detailed per-bike explanations.\n"
-        "If the user message is outside motorcycle scope, kindly say you only help with motorcycles.\n"
         "Unless user asks otherwise, prefer common models that are realistic for US buyers to find used.\n"
     )
 

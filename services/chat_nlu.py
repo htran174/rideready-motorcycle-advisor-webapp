@@ -66,7 +66,7 @@ def make_plan(
         "If the user message is outside motorcycle scope:\n"
         "- Do NOT recommend any motorcycles.\n"
         "- Do NOT include RECOMMEND actions.\n"
-        "- Respond with a general message that you only help with motorcycle-related questions.\n\n"
+        "- Respond with a general message that you only help with motorcycle related questions.\n\n"
 
 
 
